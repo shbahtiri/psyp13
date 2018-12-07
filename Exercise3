@@ -1,0 +1,231 @@
+library(psych)
+library(ggplot2) 
+library(cAIC4)
+library(r2glmm) 
+library(lme4) 
+library(lmerTest) 
+library(reshape2)
+library(nlme)
+
+stdCoef.merMod <- function(object) {
+  sdy <- sd(getME(object, "y"))
+  sdx <- apply(getME(object, "X"), 2, sd)
+  sc <- fixef(object) * sdx/sdy
+  se.fixef <- coef(summary(object))[, "Std. Error"]
+  se <- se.fixef * sdx/sdy
+  return(data.frame(stdcoef = sc, stdse = se))
+}
+
+data_pain3 = read.csv("https://raw.githubusercontent.com/kekecsz/PSYP13_Data_analysis_class-2018/master/home_sample_3.csv")
+#assign factor
+data_pain3$ID = factor(data_pain3$ID)
+
+
+View(data_pain3)
+describe(data_pain3)
+plot(data_pain3$pain2)
+plot(data_pain3$pain1)
+plot(data_pain3$pain3)
+plot(data_pain3$pain4)
+plot(data_pain3$sex)
+plot(data_pain3$age)
+plot(data_pain3$STAI_trait)
+plot(data_pain3$pain_cat)
+plot(data_pain3$cortisol_serum)
+plot(data_pain3$cortisol_saliva)
+plot(data_pain3$mindfulness)
+plot(data_pain3$weight)
+
+
+repeated_variables = c("pain1", "pain2", "pain3",	"pain4")
+cor(data_pain3[,repeated_variables])
+
+data_pain3_long = melt(data_pain3, measure.vars=repeated_variables, variable.name = "pain", value.name="pain_rating")
+  
+data_pain3_long = data_pain3_long[order(data_pain3_long[,"ID"]),]
+
+View(data_pain3_long)
+
+data_pain3_long$pain=as.numeric(data_pain3_long$pain)
+
+#fixed effects age, sex, STAI, pain catastrophizing, mindfulness, serum cortisol, time, random int. ID
+
+mod_int = lmer(pain_rating ~ pain + age + sex + STAI_trait + pain_cat + mindfulness + cortisol_serum +
+                     (1 | ID), data = data_pain3_long)
+
+mod_slope = lmer(pain_rating ~ pain +  age + sex + STAI_trait + pain_cat + mindfulness + cortisol_serum + 
+                   (pain | ID), data = data_pain3_long)
+
+#saving predic. values in new variables
+data_pain3_long_predictions = data_pain3_long
+data_pain3_long_predictions$pred_intercept = predict(mod_int)
+data_pain3_long_predictions$pred_slope = predict(mod_slope)
+
+# plotting of random intercept model
+require(MVA)
+pfun <- function(x, y) {
+  panel.xyplot(x, y[1:length(x)])
+  panel.lines(x, y[1:length(x) + length(x)], lty = 1) 
+}
+plot(xyplot(cbind(pain_rating, pred_intercept) ~ pain | ID, data = data_pain3_long_predictions, panel= pfun, ylab = "pain_rating"))
+
+
+#slope plot
+pfun <- function(x, y) {
+  panel.xyplot(x, y[1:length(x)])
+  panel.lines(x, y[1:length(x) + length(x)], lty = 1) 
+}
+plot(xyplot(cbind(pain_rating, pred_slope) ~ pain | ID, data = data_pain3_long_predictions, panel= pfun, ylab = "pain_rating"))
+
+
+r2beta(mod_int)
+r2beta(mod_slope)
+anova(mod_int, mod_slope)
+
+# comparing models
+
+cAIC(mod_int)$caic
+
+cAIC(mod_slope)$caic
+
+
+anova(mod_int, mod_slope)
+
+summary(mod_slope)
+
+stdCoef.merMod(mod_slope)
+confint(mod_slope)
+
+
+
+summary(mod_int)
+
+stdCoef.merMod(mod_int)
+confint(mod_int)
+
+# adding the quadratic term to the slope model
+mod_rep_int_quad = lmer(pain_rating ~ pain + I(pain^2) + age + sex + STAI_trait + pain_cat + mindfulness +
+                          cortisol_serum + (pain | ID), data = data_pain3_long)
+
+data_pain3_long_predictions$pred_int_quad = predict(mod_rep_int_quad)
+
+data_pain3_long_predictions$pred_int_quad = predict(mod_rep_int_quad)
+plot_quad = ggplot(data_pain3_long_predictions, aes(y = pain_rating,
+x = pain, group = ID)) + geom_point(size = 3) + geom_line(color = "red",
+aes(y = pred_int_quad, x = pain)) + facet_wrap(~ID, ncol = 5)
+plot_quad
+
+require(MVA)
+pfun <- function(x, y) {
+panel.xyplot(x, y[1:length(x)])
+panel.lines(x, y[1:length(x) + length(x)], lty = 1) 
+}
+plot(xyplot(cbind(pain_rating, pred_int_quad) ~ pain | ID, data = data_pain3_long_predictions, panel= pfun, ylab = "pain_rating"))
+
+
+cAIC(mod_slope)$caic
+
+cAIC(mod_rep_int_quad)$caic
+
+#avoiding collinearity issues
+
+data_pain3_long_centered_pain = data_pain3_long
+data_pain3_long_centered_pain$pain_centered = data_pain3_long_centered_pain$pain -
+  mean(data_pain3_long_centered_pain$pain)
+mod_rep_int_quad = lmer(pain_rating ~ pain_centered + I(pain_centered^2) + age + sex + 
+STAI_trait + pain_cat + mindfulness + cortisol_serum
++ (1 | ID), data =  data_pain3_long_centered_pain)
+
+r2beta(mod_rep_int_quad, method = "nsj", data =  data_pain3_long_centered_pain)
+
+cAIC(mod_rep_int_quad)$caic
+
+summary(mod_rep_int_quad)
+
+stdCoef.merMod(mod_rep_int_quad)
+confint((mod_rep_int_quad))
+
+# building the final model
+
+data_pain3_long_centered_pain = data_pain3_long
+data_pain3_long_centered_pain$pain_centered = data_pain3_long_centered_pain$pain -
+  mean(data_pain3_long_centered_pain$pain)
+
+data_pain3_long_centered_pain$pain_centered_2 = data_pain3_long_centered_pain$pain_centered^2
+
+mod_rep_int_quad = lmer(pain_rating ~ pain_centered + I(pain_centered^2) +
+                          age + sex + mindfulness + cortisol_serum + STAI_trait + pain_cat + (1 | ID), data = data_pain3_long_centered_pain)
+data_pain3_long_with_resid = data_pain3_long_centered_pain
+data_pain3_long_with_resid$resid = residuals(mod_rep_int_quad)
+
+
+#diagnostics
+require(influence.ME)
+influence(mod_slope, obs=T)
+
+influence_observation = influence(mod_rep_int_quad, obs = T)$alt.fixed
+influence_group = influence(mod_rep_int_quad, group = "ID")$alt.fixed
+
+boxplot(influence_observation[, "pain_centered"]) 
+boxplot(influence_observation[, "STAI_trait"]) 
+boxplot(influence_observation[, "pain_cat"])  
+boxplot(influence_observation[, "cortisol_serum"])
+boxplot(influence_observation[, "age"])  
+boxplot(influence_observation[, "sex"])
+boxplot(influence_observation[, "mindfulness"]) 
+
+
+# normality
+
+require(lattice)
+
+qqmath(mod_rep_int_quad, id = 0.05) # good rough straight line fit, 7, 3 ,11 not fitting
+qqmath(ranef(mod_rep_int_quad))
+
+# linearity
+plot(mod_rep_int_quad, arg = "pearson") - #scattered 
+
+plot(resid ~ pain_centered, data = data_pain3_long_with_resid)
+
+plot(resid ~ pain_centered_2, data = data_pain3_long_with_resid)
+
+plot(resid ~ age, data = data_pain3_long_with_resid)
+
+plot(resid ~ sex, data = data_pain3_long_with_resid)
+
+plot(resid ~ mindfulness, data = data_pain3_long_with_resid)
+
+plot(resid ~ STAI_trait, data = data_pain3_long_with_resid)
+
+plot(resid ~ cortisol_serum, data = data_pain3_long_with_resid)
+
+plot(resid ~ pain_cat, data = data_pain3_long_with_resid)
+
+
+#homoestacidity
+
+plot(mod_rep_int_quad, arg = "pearson") 
+
+homosced_mod = lm(data_pain3_long_with_resid$resid^2 ~ data_pain3_long_with_resid$ID)
+summary(homosced_mod) - #p value is higher than 0.05
+
+#cycloneplot
+
+IQR_of_residuals_by_participant = sapply(split(data_pain3_long_with_resid,
+f = data_pain3_long_with_resid$ID), function(x) IQR(x$resid))
+
+rank = rank(IQR_of_residuals_by_participant)
+
+data_pain3_long_with_resid$rank = rep(rank, each = length(repeated_variables))
+
+IDforplot = unique(data_pain3_long_with_resid$ID[order(data_pain3_long_with_resid$rank)])
+
+ggplot(data_pain3_long_with_resid, aes(y = resid, x = factor(rank),
+labels = ID)) + geom_boxplot() + scale_x_discrete(labels = IDforplot) +
+  coord_flip()
+
+
+#multicolinearity
+
+pairs.panels(data_pain3_long_centered_pain[, c("pain_centered", "age", "sex", "mindfulness", "cortisol_serum", "pain_cat", "STAI_trait" )], col = "red",
+lm = T)
